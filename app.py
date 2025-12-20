@@ -5,9 +5,12 @@ from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
 import asyncio
+import sys
 
+# Load environment
 load_dotenv()
 
+# Flask keep-alive
 app = Flask(__name__)
 
 @app.route('/')
@@ -23,7 +26,12 @@ def run_flask():
     from waitress import serve
     serve(app, host="0.0.0.0", port=port)
 
-intents = discord.Intents.all()
+# Discord bot - CORRECT INTENTS
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 @bot.event
@@ -33,28 +41,40 @@ async def on_ready():
     print(f'📊 SERVERS: {len(bot.guilds)}')
     
     for guild in bot.guilds:
-        print(f'   📍 {guild.name} ({guild.id})')
+        print(f'   📍 {guild.name} (ID: {guild.id})')
     
-    # Load cogs
-    await bot.load_extension('cogs.ai_cog')
-    await bot.load_extension('cogs.slash_commands')
-    print('✅ All cogs loaded')
+    print('=' * 30)
     
-    # Sync commands
+    # Load cogs WITH ERROR HANDLING
+    try:
+        await bot.load_extension('cogs.ai_cog')
+        print('✅ AI Cog loaded')
+    except Exception as e:
+        print(f'❌ AI Cog error: {e}')
+    
+    try:
+        await bot.load_extension('cogs.slash_commands')
+        print('✅ Slash Commands loaded')
+    except Exception as e:
+        print(f'❌ Slash Commands error: {e}')
+    
+    # Sync slash commands
     try:
         synced = await bot.tree.sync()
         print(f'✅ {len(synced)} slash commands synced')
+        for cmd in synced:
+            print(f'   ➤ /{cmd.name}')
     except Exception as e:
-        print(f'⚠️ Sync error: {e}')
+        print(f'⚠️ Slash command sync error: {e}')
     
-    print('=' * 60)
-    print('🎯 BOT READY! Features:')
-    print('   ✅ Message history (10 messages)')
-    print('   ✅ Auto status updates every 2 min')
-    print('   ✅ Beautiful embedded status')
-    print('   ✅ Multi-API failover')
+    print('=' * 30)
+    print('🎯 BOT IS FULLY OPERATIONAL!')
+    print('💡 Commands: /ping, /digambar, !ping, !digambar')
+    print('💡 Fixed Channel: #bot-commands')
+    print('💡 Status Updates: Every 2 minutes')
     print('=' * 60)
     
+    # Set status
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.playing,
@@ -62,14 +82,24 @@ async def on_ready():
         )
     )
 
+@bot.event
+async def on_message(message):
+    # Process commands
+    await bot.process_commands(message)
+
 async def main():
     # Start Flask
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print(f'🌐 Flask server started')
+    print(f'🌐 Flask server started on port {os.getenv("PORT", 8000)}')
     
     # Run bot
     token = os.getenv('DISCORD_TOKEN')
+    if not token:
+        print("❌ ERROR: DISCORD_TOKEN not found")
+        return
+    
+    print('🚀 Starting Discord bot...')
     await bot.start(token)
 
 if __name__ == "__main__":
