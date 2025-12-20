@@ -1,125 +1,91 @@
 import os
-import random
 import time
 from openai import AsyncOpenAI
-from typing import List, Dict, Optional
-import asyncio
 
 class APIManager:
     def __init__(self):
-        self.api_keys = self._load_api_keys()
+        self.api_keys = []
         self.current_index = 0
-        self.failed_keys = {}  # Track failed keys temporarily
-        self.key_stats = {}    # Track usage stats
+        self.failed_keys = {}  # key: failure_time
+        self.load_keys()
         
-        print(f"✅ Loaded {len(self.api_keys)} API keys")
-        
-    def _load_api_keys(self) -> List[str]:
-        """Load all API keys from environment variables"""
+    def load_keys(self):
+        """Load all API keys from environment"""
         keys = []
-        i = 1
         
+        # Load keys: LLM_API_KEY_1, LLM_API_KEY_2, etc.
+        i = 1
         while True:
             key_name = f"LLM_API_KEY_{i}"
             key_value = os.getenv(key_name)
             
             if not key_value:
-                # Also check without number for backward compatibility
-                if i == 1:
-                    single_key = os.getenv('LLM_API_KEY')
-                    if single_key:
-                        keys.append(single_key)
-                        print(f"✅ Loaded single API key")
                 break
             
-            # Check if key is not empty or placeholder
             if key_value.strip() and "your_openrouter_api_key" not in key_value:
                 keys.append(key_value.strip())
-                print(f"✅ Loaded API key {i}")
-                self.key_stats[key_name] = {"success": 0, "fail": 0, "last_used": None}
+                print(f'   ✅ Loaded {key_name}')
             
             i += 1
         
-        if not keys:
-            print("❌ No valid API keys found! Add LLM_API_KEY_1, LLM_API_KEY_2, etc. in .env")
+        # Also check single key
+        single_key = os.getenv('LLM_API_KEY')
+        if single_key and single_key.strip() and "your_openrouter_api_key" not in single_key:
+            if single_key not in keys:
+                keys.append(single_key.strip())
+                print('   ✅ Loaded LLM_API_KEY')
         
-        return keys
+        self.api_keys = keys
+        print(f'📦 Total API keys loaded: {len(self.api_keys)}')
+        
+        if not self.api_keys:
+            print('⚠️  WARNING: No API keys found! Add LLM_API_KEY_1 to .env')
     
-    def get_next_key(self, exclude_key: Optional[str] = None) -> Optional[str]:
-        """Get next available API key (round-robin with exclusion)"""
+    def get_next_key(self):
+        """Get next working API key with round-robin"""
         if not self.api_keys:
             return None
         
-        # Remove temporarily failed keys from consideration
-        available_keys = [
-            key for key in self.api_keys 
-            if key not in self.failed_keys or 
-            (time.time() - self.failed_keys.get(key, 0) > 60)  # 60 second cooldown
+        # Clean old failures (older than 60 seconds)
+        current_time = time.time()
+        expired_keys = [
+            key for key, fail_time in self.failed_keys.items()
+            if current_time - fail_time > 60
         ]
+        for key in expired_keys:
+            del self.failed_keys[key]
         
-        if not available_keys:
-            # All keys are in cooldown, use the one with oldest failure
-            if self.failed_keys:
-                oldest_key = min(self.failed_keys.items(), key=lambda x: x[1])[0]
-                print(f"⚠️ All keys in cooldown, trying oldest failed key: {oldest_key[:15]}...")
-                return oldest_key
-            return None
+        # Try each key once
+        for _ in range(len(self.api_keys)):
+            key = self.api_keys[self.current_index % len(self.api_keys)]
+            self.current_index += 1
+            
+            if key not in self.failed_keys:
+                return key
         
-        # Get next key (round-robin)
-        key = available_keys[self.current_index % len(available_keys)]
-        self.current_index += 1
+        # All keys are in cooldown
+        if self.failed_keys:
+            # Return the one that failed longest ago
+            oldest_key = min(self.failed_keys.items(), key=lambda x: x[1])[0]
+            print(f'⚠️  All keys in cooldown, trying: {oldest_key[:20]}...')
+            return oldest_key
         
-        # If we need to exclude a specific key
-        if exclude_key and key == exclude_key and len(available_keys) > 1:
-            key = available_keys[(self.current_index + 1) % len(available_keys)]
-        
-        return key
+        return None
     
-    def mark_success(self, api_key: str):
-        """Mark an API key as successful"""
-        # Remove from failed keys if present
+    def mark_success(self, api_key):
+        """Mark API key as successful"""
         if api_key in self.failed_keys:
             del self.failed_keys[api_key]
-        
-        # Update stats
-        for key_name, key_value in os.environ.items():
-            if key_value == api_key:
-                if key_name not in self.key_stats:
-                    self.key_stats[key_name] = {"success": 0, "fail": 0, "last_used": None}
-                self.key_stats[key_name]["success"] += 1
-                self.key_stats[key_name]["last_used"] = time.time()
-                break
     
-    def mark_failed(self, api_key: str, error_message: str = ""):
-        """Mark an API key as failed (temporarily)"""
+    def mark_failed(self, api_key, error_message=""):
+        """Mark API key as failed"""
         self.failed_keys[api_key] = time.time()
-        
-        # Update stats
-        for key_name, key_value in os.environ.items():
-            if key_value == api_key:
-                if key_name not in self.key_stats:
-                    self.key_stats[key_name] = {"success": 0, "fail": 0, "last_used": None}
-                self.key_stats[key_name]["fail"] += 1
-                break
-        
-        # Print error info
-        key_prefix = api_key[:15] + "..." if len(api_key) > 15 else api_key
-        print(f"❌ API key failed: {key_prefix} | Error: {error_message[:100]}")
+        error_short = error_message[:100] if error_message else "Unknown error"
+        print(f'❌ API key failed: {error_short}')
     
-    def get_stats(self) -> Dict:
-        """Get statistics about API key usage"""
-        return {
-            "total_keys": len(self.api_keys),
-            "available_keys": len(self.api_keys) - len(self.failed_keys),
-            "failed_keys": len(self.failed_keys),
-            "key_stats": self.key_stats.copy()
-        }
-    
-    def get_client(self, api_key: Optional[str] = None) -> Optional[AsyncOpenAI]:
-        """Get OpenAI client with an API key"""
-        if not api_key:
-            api_key = self.get_next_key()
-        
+    def get_client(self):
+        """Get OpenAI client with working key"""
+        api_key = self.get_next_key()
         if not api_key:
             return None
         
@@ -128,5 +94,5 @@ class APIManager:
             api_key=api_key
         )
 
-# Global instance
+# Create global instance
 api_manager = APIManager()
