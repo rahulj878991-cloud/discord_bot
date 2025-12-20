@@ -6,127 +6,102 @@ from flask import Flask
 from threading import Thread
 import asyncio
 
-# Load environment variables
+# Load environment
 load_dotenv()
 
-# Flask app for keep-alive
+# Flask keep-alive
 app = Flask(__name__)
 
 @app.route('/')
-def home():
-    return "🤖 Digambar GPT - Uncensored AI Assistant! 🔥"
+def index():
+    return "🤖 Digambar GPT Online"
 
 @app.route('/health')
 def health():
-    return {"status": "healthy", "bot": "Digambar GPT"}, 200
+    return {"status": "online", "bot": "Digambar GPT"}, 200
 
-@app.route('/api-status')
-def api_status():
-    """Check API key status"""
-    try:
-        from cogs.api_manager import api_manager
-        stats = api_manager.get_stats()
-        return {
-            "status": "healthy" if stats['available_keys'] > 0 else "warning",
-            "bot": "Digambar GPT",
-            "api_keys": {
-                "total": stats['total_keys'],
-                "available": stats['available_keys'],
-                "failed": stats['failed_keys']
-            },
-            "message": "All good!" if stats['available_keys'] > 0 else "Some issue!"
-        }
-    except:
-        return {"status": "error", "bot": "Digambar GPT", "message": "API manager not loaded"}, 500
-
-def keep_alive():
-    """Start Flask server in a separate thread"""
+def run_flask():
     port = int(os.getenv('PORT', 8000))
-    thread = Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': port, 'debug': False})
-    thread.daemon = True
-    thread.start()
-    print(f"✅ Flask keep-alive server started on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-# Discord bot setup
-intents = discord.Intents.default()
-intents.message_content = True
-intents.messages = True
-
+# Discord bot with ALL intents
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
-    print(f'✅ Digambar GPT logged in as {bot.user} (ID: {bot.user.id})')
-    print('🔥 Digambar GPT ready to serve!')
-    print('------')
+    print('=' * 50)
+    print(f'🔥 Digambar GPT Logged In: {bot.user}')
+    print(f'📊 Connected to {len(bot.guilds)} servers:')
     
-    # Load all cogs
-    cogs_to_load = ['cogs.ai_cog', 'cogs.slash_commands']
+    for guild in bot.guilds:
+        print(f'   - {guild.name} (ID: {guild.id})')
     
-    for cog in cogs_to_load:
-        try:
-            await bot.load_extension(cog)
-            print(f'✅ {cog} loaded successfully')
-        except Exception as e:
-            print(f'❌ Failed to load {cog}: {e}')
+    print('=' * 50)
+    
+    # Load cogs
+    cogs_loaded = 0
+    try:
+        await bot.load_extension('cogs.ai_cog')
+        cogs_loaded += 1
+        print('✅ AI Cog loaded')
+    except Exception as e:
+        print(f'❌ AI Cog error: {e}')
+    
+    try:
+        await bot.load_extension('cogs.slash_commands')
+        cogs_loaded += 1
+        print('✅ Slash Commands Cog loaded')
+    except Exception as e:
+        print(f'❌ Slash Commands error: {e}')
     
     # Sync slash commands
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash command(s):")
-        for cmd in synced:
-            print(f"   - /{cmd.name}")
+        print(f'✅ {len(synced)} slash commands synced')
     except Exception as e:
-        print(f"❌ Failed to sync slash commands: {e}")
+        print(f'❌ Slash command sync error: {e}')
     
-    # Show config
-    mode = os.getenv('FIXED_CHANNEL_RESPONSE_MODE', 'always')
-    print(f"✅ Fixed channel response mode: {mode}")
+    print('=' * 50)
+    print('🎯 Bot is READY!')
+    print('💡 Test with: /ping or !ping')
+    print('=' * 50)
     
-    print('✅ Digambar GPT ready with all features!')
-    
-    # Set status
-    await bot.change_presence(activity=discord.Activity(
-        type=discord.ActivityType.listening, 
-        name="/ask | Digambar GPT"
-    ))
+    # Set bot status
+    try:
+        await bot.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.playing,
+                name="/ask | Digambar GPT"
+            )
+        )
+        print('✅ Status set successfully')
+    except Exception as e:
+        print(f'❌ Status error: {e}')
 
 @bot.event
 async def on_message(message):
-    # Don't process commands if message starts with /
-    if message.content.startswith('/'):
+    # Don't respond to self
+    if message.author == bot.user:
         return
     
-    # Process regular commands
+    # Process commands
     await bot.process_commands(message)
 
-async def run_bot():
-    """Run the Discord bot"""
+async def main():
+    # Start Flask in background thread
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print(f'🌐 Flask server started on port {os.getenv("PORT", 8000)}')
+    
+    # Get token and run bot
     token = os.getenv('DISCORD_TOKEN')
     if not token:
-        print("❌ ERROR: DISCORD_TOKEN not found in .env file!")
+        print("❌ ERROR: DISCORD_TOKEN missing in .env")
         return
     
-    print("🚀 Starting Digambar GPT...")
-    print("🎯 Features: Uncensored | Multi-API | Slash Commands | Configurable")
-    
+    print('🚀 Starting Discord bot...')
     await bot.start(token)
 
-def main():
-    """Main function to start both Flask and Discord bot"""
-    # Start Flask server first (for Render)
-    print("🌐 Starting Flask keep-alive server...")
-    keep_alive()
-    
-    # Run Discord bot
-    print("🤖 Starting Digambar GPT...")
-    
-    try:
-        asyncio.run(run_bot())
-    except KeyboardInterrupt:
-        print("\n👋 Digambar GPT stopped by user")
-    except Exception as e:
-        print(f"❌ Error running bot: {e}")
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
